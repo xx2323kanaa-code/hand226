@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Hand Open/Close Counter</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+
+<style>
+body{
+  margin:0;
+  background:#fff;
+  color:#000;
+  font-family:system-ui, sans-serif;
+}
+#title{ padding:6px; font-weight:bold; }
+#countNow{ font-size:24px; padding:6px; }
+#video{
+  width:100vw;
+  height:60vh;
+  object-fit:cover;
+  background:#000;
+}
+#videoWrapper{
+  position:relative;
+  width:100%;
+  height:60vh;
+  overflow:hidden;
+}
+#overlay{
+  position:absolute;
+  top:10px;
+  right:10px;
+  left:10px;
+  background:rgba(0,0,0,0.65);
+  color:#fff;
+  font-size:14px;
+  padding:6px 8px;
+  border-radius:8px;
+  min-height:36px;
+  display:none;
+  line-height:1.4;
+}
+#panel{
+  position:fixed;
+  bottom:0; left:0; right:0;
+  background:#f0f0f0;
+  border-top:1px solid #999;
+}
+button, select{
+  margin:4px;
+  padding:6px;
+}
+#status{
+  padding:4px 6px;
+  font-size:13px;
+  color:#111;
+}
+#hud{
+  display:none;
+  font-size:12px;
+  max-height:180px;
+  overflow:auto;
+  white-space:pre;
+  border-top:1px dashed #999;
+  padding:4px;
+}
+#intro{
+  padding:8px 10px;
+  background:#fff9f0;
+  border-bottom:1px solid #e0c080;
+  font-size:14px;
+  line-height:1.5;
+  margin-bottom:4px;
+}
+#intro ol{
+  margin:4px 0 0 18px;
+  padding:0;
+}
+#extraArea{
+  padding:6px;
+  font-size:13px;
+}
+#extraControls{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:6px;
+  margin-bottom:6px;
+}
+#extraControls>button,#extraControls>select{
+  padding:6px 10px;
+  border-radius:4px;
+  border:1px solid #999;
+  background:#fff;
+}
+#historyEditor{
+  padding:6px;
+  font-size:13px;
+  border-top:1px solid #d0d0d0;
+  background:#fffef8;
+}
+#historyEditor textarea{
+  width:100%;
+  min-height:120px;
+  border:1px solid #bbb;
+  border-radius:4px;
+  padding:6px;
+  font-family:monospace;
+  font-size:13px;
+  resize:vertical;
+}
+#historyEditor .editorActions{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  margin-top:6px;
+  flex-wrap:wrap;
+}
+#historyEditor button{
+  padding:6px 10px;
+  border-radius:4px;
+  border:1px solid #999;
+  background:#fff;
+}
+#historyChart{
+  width:100%;
+  max-width:100%;
+  border:1px solid #ccc;
+  background:#f9f9f9;
+}
+#graphMessage{
+  margin-top:4px;
+  color:#1a1a1a;
+}
+</style>
+</head>
+
+<body>
+
+<div id="title">Hand Open/Close Counter / 手の開閉カウンター</div>
+<div id="countNow">Now: 0 / 現在: 0</div>
+
+<div id="intro">
+  <strong>このアプリは、手の開閉運動（左右交互のグーパー）を支援します。</strong>
+  <ol>
+    <li>手をゆっくり左右交互に開閉すると、手のむくみやこわばりが軽くなります。</li>
+    <li>肘をつくなどして行うと、心臓や肺の負担が少ないです。</li>
+    <li>15回ほど実施してください。</li>
+    <li>左右の脳をおだやかに使うことで、脳の無意識の興奮をおだやかに調節してくれるといわれます。</li>
+    <li>目標回数はありません。症状が少し軽くなる回数が、あなたのちょうどよい回数です。</li>
+  </ol>
+</div>
+
+<div id="videoWrapper">
+  <video id="video" autoplay muted playsinline></video>
+  <div id="overlay" aria-live="polite"></div>
+</div>
+
+<div id="panel">
+  <button id="startBtn">📷 Start Camera / カメラ起動</button>
+
+  <select id="facing">
+    <option value="environment" selected>Back / 背面</option>
+    <option value="user">Front / 前側</option>
+  </select>
+
+  <button id="hudBtn" title="HUD表示切替">H</button>
+  <button id="copyHudBtn" title="HUDログコピー">HP</button>
+  <button id="csvBtn">CSV / CSV一括出力</button>
+
+  <div id="hud"></div>
+</div>
+
+<div id="status" aria-live="polite"></div>
+
+<div id="extraArea">
+  <div id="extraControls">
+    <button id="plotBtn">診察時グラフ化</button>
+  </div>
+  <canvas id="historyChart" width="320" height="180" aria-label="過去7日間の実施回数"></canvas>
+  <div id="graphMessage"></div>
+</div>
+
+<details id="historyEditor">
+  <summary>
+    <span>CSV/履歴を手動で調整</span>
+    <button id="historyEditorApplyInline" type="button">反映</button>
+  </summary>
+  <textarea id="historyEditorArea" aria-label="日別記録をカンマ区切りで編集"></textarea>
+  <div class="editorActions">
+    <button id="historyEditorApply">履歴に反映</button>
+    <span>1行目はヘッダ「date,total」を維持してください。</span>
+  </div>
+</details>
+
+<script>
+/* ===== 基本DOM ===== */
+const video = document.getElementById("video");
+const countNow = document.getElementById("countNow");
+const hud = document.getElementById("hud");
+const status = document.getElementById("status");
+const intro = document.getElementById("intro");
+const extraArea = document.getElementById("extraArea");
+const overlay = document.getElementById("overlay");
+
+/* ===== モデル・状態 ===== */
+let model=null, stream=null, running=false;
+let lastFootY=null, lastEventTime=0, lastSign=null, armed=false;
+let sessionCount=0, logs=[];
+let starTimes=[];
+
+const MAX_LOGS=300;
+
+/* ---- tuning（元の閾値を温存） ---- */
+const THRESH_ON=6;
+const THRESH_OFF=3;
+const LOCK_MS=800;
+const JUMP_CUT=120;
+
+/* ===== daily storage（足→手に名称変更、構造は簡素化） ===== */
+const todayKey = new Date().toISOString().slice(0,10);
+const rawHistory = JSON.parse(localStorage.getItem("handHistory")||"{}");
+const history = {};
+for(const [day, record] of Object.entries(rawHistory)){
+  history[day] = normalizeRecord(record);
+}
+function normalizeRecord(record){
+  if(typeof record==="number"){
+    return {total:record};
+  }
+  return { total: record?.total || 0 };
+}
+function getCombinedHistory(){
+  const combined = {};
+  for(const [day, record] of Object.entries(history)){
+    combined[day] = { total: record.total };
+  }
+  return combined;
+}
+
+/* ===== Camera ===== */
+async function startCamera(){
+  stream = await navigator.mediaDevices.getUserMedia({
+    video:{ facingMode: document.getElementById("facing").value }
+  });
+  video.srcObject = stream;
+  await new Promise(r => video.onloadedmetadata = r);
+  await video.play();
+}
+function stopCamera(){
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+}
+
+/* ===== Buttons ===== */
+document.getElementById("startBtn").onclick = async()=>{
+  if(!running){
+    if(!model) model = await cocoSsd.load();
+    await startCamera();
+    running=true;
+    sessionCount=0;
+    starTimes=[];
+    countNow.textContent="Now: 0 / 現在: 0";
+    if(intro) intro.style.display="none";
+    if(extraArea) extraArea.style.display="none";
+    if(overlay) overlay.style.display="none";
+    if(graphMessage) graphMessage.textContent="";
+    logs.push("=== SESSION START ===");
+    detectLoop();
+    document.getElementById("startBtn").textContent="⏹ Stop / 停止";
+  }else{
+    running=false;
+    stopCamera();
+    const todayRecord = history[todayKey] || {total:0};
+    todayRecord.total += sessionCount;
+    history[todayKey] = todayRecord;
+    localStorage.setItem("handHistory",JSON.stringify(history));
+    logs.push("=== SESSION END ===");
+    if(intro) intro.style.display="block";
+    if(extraArea) extraArea.style.display="block";
+    if(overlay && overlay.textContent) overlay.style.display="block";
+    document.getElementById("startBtn").textContent="📷 Start Camera / カメラ起動";
+  }
+};
+
+document.getElementById("hudBtn").onclick=()=>{
+  hud.style.display = hud.style.display==="none"?"block":"none";
+};
+
+/* ===== HUD Copy ===== */
+document.getElementById("copyHudBtn").onclick=async()=>{
+  try{
+    await navigator.clipboard.writeText(logs.join("\n"));
+    logs.push("[HUD LOG COPIED]");
+    hud.textContent=logs.join("\n");
+  }catch(e){
+    logs.push("[HUD COPY FAILED]");
+  }
+};
+
+/* ===== 平均テンポ計算（温存） ===== */
+function calculateAverageTempo(starTimes){
+  if(starTimes.length < 3) return null;
+
+  let intervals=[];
+  for(let i=1;i<starTimes.length;i++){
+    const dt=(starTimes[i]-starTimes[i-1])/1000;
+    intervals.push(dt);
+  }
+
+  let blocks=[], current=[];
+  for(const t of intervals){
+    if(t>=0.5 && t<=2.0){
+      current.push(t);
+    }else{
+      if(current.length>=2) blocks.push([...current]);
+      current=[];
+    }
+  }
+  if(current.length>=2) blocks.push([...current]);
+  if(blocks.length===0) return null;
+
+  const all = blocks.flat();
+  const avgSec = all.reduce((a,b)=>a+b,0)/all.length;
+  return (60/avgSec).toFixed(1);
+}
+
+/* ===== CSV ===== */
+document.getElementById("csvBtn").onclick=()=>{
+  status.textContent="CSV出力を準備しています…";
+  const csvTimeout = setTimeout(()=>{
+    status.textContent="CSV出力に時間がかかっています。保存制限やメモリが不足している端末では、紙に日付と回数を書いて次回受診にお持ちください。";
+  },15000);
+
+  const exportHistory = getCombinedHistory();
+
+  const rows = ["date,total"];
+  const sortedDays = Object.keys(exportHistory).sort();
+  for(const day of sortedDays){
+    const record = exportHistory[day];
+    rows.push(`${day},${record.total}`);
+  }
+  const csv = rows.join("\n");
+  const dateStr = todayKey.replace(/-/g,"");
+  const filename=`HandOpenCloseCounter_${dateStr}_summary.csv`;
+
+  const blob=new Blob([csv],{type:"text/csv"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=filename;
+  try{
+    a.click();
+    status.textContent="CSV（まとめ）を端末に保存しました。保存不能な場合は紙に日付と回数を書いてください。";
+  }catch(e){
+    status.textContent="CSV出力がブロックされました。この端末では保存できない可能性があります。紙のメモをご利用ください。";
+  }finally{
+    clearTimeout(csvTimeout);
+  }
+};
+
+/* ===== 履歴グラフ（温存） ===== */
+const chartCanvas = document.getElementById("historyChart");
+const chartCtx = chartCanvas.getContext("2d");
+const graphMessage = document.getElementById("graphMessage");
+
+document.getElementById("plotBtn").onclick=renderHistoryChart;
+
+function renderHistoryChart(){
+  if(!chartCtx) return;
+  const combined = getCombinedHistory();
+  const days = Object.keys(combined).sort();
+  if(days.length===0){
+    chartCtx.clearRect(0,0,chartCanvas.width,chartCanvas.height);
+    graphMessage.textContent="まだ記録がありません。";
+    return;
+  }
+
+  const recentDays = days.slice(-7);
+  const values = recentDays.map(day=>combined[day].total);
+  const width = chartCanvas.width;
+  const height = chartCanvas.height;
+  const padding = 16;
+  const maxValue = Math.max(...values,1);
+  chartCtx.clearRect(0,0,width,height);
+  chartCtx.fillStyle="#f6f6f6";
+  chartCtx.fillRect(0,0,width,height);
+
+  const barFullWidth = (width - padding*2) / recentDays.length;
+  const barWidth = Math.max(12, barFullWidth * 0.7);
+
+  for(let i=0;i<recentDays.length;i++){
+    const val = values[i];
+    const barHeight = (height - padding*2) * (val / maxValue);
+    const x = padding + i * barFullWidth + (barFullWidth - barWidth)/2;
+    const y = height - padding - barHeight;
+    chartCtx.fillStyle="#4a90e2";
+    chartCtx.fillRect(x, y, barWidth, barHeight);
+
+    chartCtx.font="10px system-ui, sans-serif";
+    chartCtx.textAlign="center";
+    chartCtx.fillStyle="#333";
+    chartCtx.fillText(recentDays[i].slice(5), x + barWidth/2, height - padding + 12);
+
+    chartCtx.fillStyle="#111";
+    chartCtx.fillText(val.toFixed(0), x + barWidth/2, y - 4);
+  }
+  const avg = (values.reduce((sum,v)=>sum+v,0)/values.length).toFixed(1);
+  graphMessage.textContent=`直近${recentDays.length}日平均 ${avg}回、最新 ${recentDays[recentDays.length-1]} ${values[values.length-1]}回`;
+}
+
+/* ===== 履歴エディタ（温存・列数簡素化） ===== */
+const historyEditor = document.getElementById("historyEditor");
+const historyEditorArea = document.getElementById("historyEditorArea");
+const historyEditorApply = document.getElementById("historyEditorApply");
+const historyEditorApplyInline = document.getElementById("historyEditorApplyInline");
+
+if(historyEditor){
+  historyEditor.addEventListener("toggle",()=>{
+    if(historyEditor.open){
+      refreshHistoryEditor();
+    }
+  });
+}
+if(historyEditorApply){
+  historyEditorApply.addEventListener("click",(e)=>{
+    e.preventDefault();
+    applyHistoryEditor();
+  });
+}
+if(historyEditorApplyInline){
+  historyEditorApplyInline.addEventListener("click",(e)=>{
+    e.preventDefault();
+    applyHistoryEditor();
+  });
+}
+
+function refreshHistoryEditor(){
+  if(!historyEditorArea) return;
+  const combined = getCombinedHistory();
+  const rows = ["date,total"];
+  Object.keys(combined).sort().forEach(day=>{
+    const record = combined[day];
+    rows.push(`${day},${record.total}`);
+  });
+  historyEditorArea.value = rows.join("\n");
+}
+
+function applyHistoryEditor(){
+  if(!historyEditorArea) return;
+  const lines = historyEditorArea.value.split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length);
+  if(lines.length<=1) return;
+
+  const newHistory = {};
+  for(const line of lines.slice(1)){
+    const [date,total] = line.split(",");
+    if(!date || isNaN(total)) continue;
+    newHistory[date] = { total: Number(total) };
+  }
+  if(Object.keys(newHistory).length===0) return;
+
+  for(const [date, record] of Object.entries(newHistory)){
+    history[date] = record;
+  }
+  localStorage.setItem("handHistory",JSON.stringify(history));
+  refreshHistoryEditor();
+  renderHistoryChart();
+}
+
+refreshHistoryEditor();
+renderHistoryChart();
+
+/* ===== detection loop（アルゴリズム温存） ===== */
+async function detectLoop(){
+  if(!running) return;
+
+  if(logs.length===0){
+    logs.push("detectLoop running...");
+    hud.textContent=logs.join("\n");
+  }
+
+  const preds = await model.detect(video);
+  const p = preds.find(x=>x.class==="person");
+
+  if(p){
+    const footY = p.bbox[1];
+    const now = performance.now();
+
+    if(lastFootY!==null){
+      const dY = footY-lastFootY;
+
+      if(Math.abs(dY)<JUMP_CUT){
+        const sign = dY>0?"+":dY<0?"-":"0";
+        let mark="";
+
+        if(!armed && Math.abs(dY)>=THRESH_ON && sign!=="0"){
+          armed=true;
+        }
+
+        if(armed){
+          const timeOK=(now-lastEventTime)>=LOCK_MS;
+          const signOK=!lastSign||(sign!==lastSign&&sign!=="0");
+
+          if(timeOK && signOK && Math.abs(dY)>=THRESH_ON){
+            sessionCount++;
+            countNow.textContent="Now: "+sessionCount+" / 現在: "+sessionCount;
+            lastEventTime=now;
+            lastSign=sign;
+            armed=false;
+            mark=" ★";
+            starTimes.push(now);
+          }
+
+          if(Math.abs(dY)<=THRESH_OFF){
+            armed=false;
+          }
+        }
+
+        const log=
+          `t:${((now-lastEventTime)/1000).toFixed(1)}s  `+
+          `footY:${footY.toFixed(0)}  `+
+          `dY:${dY.toFixed(0)}  `+
+          `sign:${sign}${mark}`;
+
+        logs.push(log);
+        if(logs.length>MAX_LOGS) logs.shift();
+        hud.textContent=logs.join("\n");
+      }
+    }
+    lastFootY=footY;
+  }
+
+  requestAnimationFrame(detectLoop);
+}
+</script>
+
+</body>
+</html>
